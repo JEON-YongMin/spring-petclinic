@@ -42,8 +42,10 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -123,6 +125,23 @@ class OwnerControllerTests {
 	}
 
 	@Test
+	void processCreationFormRejectsDuplicateTelephone() throws Exception {
+		given(this.owners.existsByTelephone("6085551023")).willReturn(true);
+
+		mockMvc
+			.perform(post("/owners/new").param("firstName", "Joe")
+				.param("lastName", "Bloggs")
+				.param("address", "123 Caramel Street")
+				.param("city", "London")
+				.param("telephone", "6085551023"))
+			.andExpect(status().isOk())
+			.andExpect(model().attributeHasFieldErrors("owner", "telephone"))
+			.andExpect(view().name("owners/createOrUpdateOwnerForm"));
+
+		verify(this.owners, never()).save(any(Owner.class));
+	}
+
+	@Test
 	void processCreationFormHasErrors() throws Exception {
 		mockMvc
 			.perform(post("/owners/new").param("firstName", "Joe").param("lastName", "Bloggs").param("city", "London"))
@@ -131,6 +150,8 @@ class OwnerControllerTests {
 			.andExpect(model().attributeHasFieldErrors("owner", "address"))
 			.andExpect(model().attributeHasFieldErrors("owner", "telephone"))
 			.andExpect(view().name("owners/createOrUpdateOwnerForm"));
+
+		verify(this.owners, never()).existsByTelephone(anyString());
 	}
 
 	@Test
@@ -146,6 +167,35 @@ class OwnerControllerTests {
 		Page<Owner> tasks = new PageImpl<>(List.of(george(), new Owner()));
 		when(this.owners.findByLastNameStartingWith(anyString(), any(Pageable.class))).thenReturn(tasks);
 		mockMvc.perform(get("/owners?page=1")).andExpect(status().isOk()).andExpect(view().name("owners/ownersList"));
+	}
+
+	@Test
+	void processFindFormTreatsNonPositivePageAsFirstPage() throws Exception {
+		Page<Owner> tasks = new PageImpl<>(List.of(george(), new Owner()));
+		when(this.owners.findByLastNameStartingWith(anyString(), any(Pageable.class))).thenReturn(tasks);
+
+		for (String page : List.of("0", "-1")) {
+			mockMvc.perform(get("/owners").param("page", page))
+				.andExpect(status().isOk())
+				.andExpect(model().attribute("currentPage", 1))
+				.andExpect(view().name("owners/ownersList"));
+		}
+
+		verify(this.owners, times(2)).findByLastNameStartingWith(eq(""),
+				argThat(pageable -> pageable.getPageNumber() == 0));
+	}
+
+	@Test
+	void processFindFormKeepsPositivePage() throws Exception {
+		Page<Owner> tasks = new PageImpl<>(List.of(george(), new Owner()));
+		when(this.owners.findByLastNameStartingWith(anyString(), any(Pageable.class))).thenReturn(tasks);
+
+		mockMvc.perform(get("/owners?page=2"))
+			.andExpect(status().isOk())
+			.andExpect(model().attribute("currentPage", 2))
+			.andExpect(view().name("owners/ownersList"));
+
+		verify(this.owners).findByLastNameStartingWith(eq(""), argThat(pageable -> pageable.getPageNumber() == 1));
 	}
 
 	@Test
@@ -225,6 +275,43 @@ class OwnerControllerTests {
 		mockMvc.perform(post("/owners/{ownerId}/edit", TEST_OWNER_ID))
 			.andExpect(status().is3xxRedirection())
 			.andExpect(view().name("redirect:/owners/{ownerId}"));
+
+		verify(this.owners).existsByTelephoneAndIdNot("6085551023", TEST_OWNER_ID);
+	}
+
+	@Test
+	void processUpdateOwnerFormAllowsCurrentTelephone() throws Exception {
+		given(this.owners.existsByTelephoneAndIdNot("6085551023", TEST_OWNER_ID)).willReturn(false);
+
+		mockMvc
+			.perform(post("/owners/{ownerId}/edit", TEST_OWNER_ID).param("firstName", "George")
+				.param("lastName", "Franklin")
+				.param("address", "110 W. Liberty St.")
+				.param("city", "Madison")
+				.param("telephone", "6085551023"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+
+		verify(this.owners).existsByTelephoneAndIdNot("6085551023", TEST_OWNER_ID);
+
+		verify(this.owners).save(any(Owner.class));
+	}
+
+	@Test
+	void processUpdateOwnerFormRejectsAnotherOwnersTelephone() throws Exception {
+		given(this.owners.existsByTelephoneAndIdNot("1316761638", TEST_OWNER_ID)).willReturn(true);
+
+		mockMvc
+			.perform(post("/owners/{ownerId}/edit", TEST_OWNER_ID).param("firstName", "George")
+				.param("lastName", "Franklin")
+				.param("address", "110 W. Liberty St.")
+				.param("city", "Madison")
+				.param("telephone", "1316761638"))
+			.andExpect(status().isOk())
+			.andExpect(model().attributeHasFieldErrors("owner", "telephone"))
+			.andExpect(view().name("owners/createOrUpdateOwnerForm"));
+
+		verify(this.owners, never()).save(any(Owner.class));
 	}
 
 	@Test
@@ -254,6 +341,16 @@ class OwnerControllerTests {
 			.andExpect(model().attribute("owner",
 					hasProperty("pets", hasItem(hasProperty("visits", hasSize(greaterThan(0)))))))
 			.andExpect(view().name("owners/ownerDetails"));
+
+		verify(this.owners, times(1)).findById(TEST_OWNER_ID);
+	}
+
+	@Test
+	void showOwnerNotFound() throws Exception {
+		int unknownOwnerId = 999;
+		given(this.owners.findById(unknownOwnerId)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/owners/{ownerId}", unknownOwnerId)).andExpect(status().isNotFound());
 	}
 
 	@Test
