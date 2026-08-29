@@ -280,6 +280,24 @@ class OwnerControllerTests {
 	}
 
 	@Test
+	void processUpdateOwnerFormAllowsCurrentTelephone() throws Exception {
+		given(this.owners.existsByTelephoneAndIdNot("6085551023", TEST_OWNER_ID)).willReturn(false);
+
+		mockMvc
+			.perform(post("/owners/{ownerId}/edit", TEST_OWNER_ID).param("firstName", "George")
+				.param("lastName", "Franklin")
+				.param("address", "110 W. Liberty St.")
+				.param("city", "Madison")
+				.param("telephone", "6085551023"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+
+		verify(this.owners).existsByTelephoneAndIdNot("6085551023", TEST_OWNER_ID);
+
+		verify(this.owners).save(any(Owner.class));
+	}
+
+	@Test
 	void processUpdateOwnerFormRejectsAnotherOwnersTelephone() throws Exception {
 		given(this.owners.existsByTelephoneAndIdNot("1316761638", TEST_OWNER_ID)).willReturn(true);
 
